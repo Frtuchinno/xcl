@@ -1052,7 +1052,9 @@ fn half_precision_overloads_run() {
     let mad = k.s.tertiary(Tertiary::FMad, ha, hb, ab);
     // (f16 isSpecialFloat needs SM 6.9.)
     let nan = k.s.fclass(FClass::IsNaN, a);
-    let sum = k.s.wave_active_op(ab, WaveOp::Max, false);
+    // Not over `ab`: the AMD Windows driver drops an fabs / fneg that feeds a wave reduction
+    // (DXC's HLSL `WaveActiveMax(abs(x))` gives the max of x too, wave32 and wave64).
+    let sum = k.s.wave_active_op(mx, WaveOp::Max, false);
     for (i, v) in [mx, fl, ab, mad, sum].into_iter().enumerate() {
         let e = k.s.m.cast(CastOp::FPExt, v, f32);
         k.out(i as u32, e);
@@ -1062,7 +1064,7 @@ fn half_precision_overloads_run() {
     let xs: Vec<f32> = (0..32).map(|l| l as f32 * 0.75 - 9.0).collect();
     let ys: Vec<f32> = (0..32).map(|l| 5.0 - l as f32 * 0.5).collect();
     let Some(r) = gpu(&c, &mem_of(&[xs.iter().map(|f| f.to_bits()).collect(), ys.iter().map(|f| f.to_bits()).collect()]), &[], &[]) else { return };
-    let ymax = ys.iter().fold(0f32, |m, y| m.max(y.abs()));
+    let wmax = xs.iter().zip(&ys).fold(f32::MIN, |m, (x, y)| m.max(x.max(*y)));
     for l in 0..32 {
         let (x, y) = (xs[l], ys[l]); // all exactly representable in f16
         let got = |i: usize| f32::from_bits(outv(&r, i)[l]);
@@ -1070,7 +1072,7 @@ fn half_precision_overloads_run() {
         assert_eq!(got(1), x.floor());
         assert_eq!(got(2), y.abs());
         assert!((got(3) - (x * y + y.abs())).abs() <= 0.05, "half mad {x} {y}: {}", got(3));
-        assert_eq!(got(4), ymax);
+        assert_eq!(got(4), wmax);
         assert_eq!(outv(&r, 5)[l], 0);
     }
 }
